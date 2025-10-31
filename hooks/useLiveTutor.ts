@@ -1,0 +1,212 @@
+import { useState, useRef, useCallback } from 'react';
+import { LiveServerMessage, FunctionCall, FunctionResponse } from "@google/genai";
+import { Progress, Transcript } from '../types';
+import { startLiveSession, createPcmBlob, LiveSession } from '../services/geminiService';
+import { decode, decodeAudioData } from '../utils/audio';
+
+const INPUT_SAMPLE_RATE = 16000;
+const OUTPUT_SAMPLE_RATE = 24000;
+const MAX_RETRIES = 3;
+
+export const useLiveTutor = (
+  onStreamMessage: (newTranscript: Transcript) => void,
+  onToolCall: (functionCalls: FunctionCall[]) => Promise<FunctionResponse[]>,
+  progress: Progress
+) => {
+  const sessionPromiseRef = useRef<Promise<LiveSession> | null>(null);
+  const [isSessionActive, setIsSessionActive] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+
+  const inputAudioContextRef = useRef<AudioContext | undefined>(undefined);
+  const outputAudioContextRef = useRef<AudioContext | undefined>(undefined);
+  const mediaStreamRef = useRef<MediaStream | undefined>(undefined);
+  const scriptProcessorRef = useRef<ScriptProcessorNode | undefined>(undefined);
+  const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
+  const nextStartTimeRef = useRef(0);
+  
+  const transcriptRef = useRef<Transcript>({ user: '', ai: '', isFinal: false });
+  const retryCountRef = useRef(0);
+  const stopSignalRef = useRef(false);
+
+  const processAudioMessage = useCallback(async (message: LiveServerMessage) => {
+    const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+    if (base64Audio) {
+      if (!outputAudioContextRef.current) {
+        outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: OUTPUT_SAMPLE_RATE });
+      }
+      const ctx = outputAudioContextRef.current;
+      if (ctx.state === 'suspended') await ctx.resume();
+      
+      setIsSpeaking(true);
+      
+      const audioBytes = decode(base64Audio);
+      const audioBuffer = await decodeAudioData(audioBytes, ctx, OUTPUT_SAMPLE_RATE, 1);
+      
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
+      
+      const currentTime = ctx.currentTime;
+      nextStartTimeRef.current = Math.max(nextStartTimeRef.current, currentTime);
+      
+      source.start(nextStartTimeRef.current);
+      nextStartTimeRef.current += audioBuffer.duration;
+      
+      audioSourcesRef.current.add(source);
+      source.onended = () => {
+        audioSourcesRef.current.delete(source);
+        if (audioSourcesRef.current.size === 0) {
+            setIsSpeaking(false);
+        }
+      };
+    }
+  }, []);
+  
+  const processTranscriptionMessage = useCallback((message: LiveServerMessage) => {
+      let updated = false;
+      if (message.serverContent?.inputTranscription) {
+          transcriptRef.current.user = message.serverContent.inputTranscription.text;
+          updated = true;
+      }
+      if (message.serverContent?.outputTranscription) {
+          transcriptRef.current.ai = message.serverContent.outputTranscription.text;
+          updated = true;
+      }
+       if (message.serverContent?.turnComplete) {
+          transcriptRef.current.isFinal = true;
+          updated = true;
+      }
+
+      if(updated){
+        onStreamMessage({ ...transcriptRef.current });
+        if(transcriptRef.current.isFinal){
+            transcriptRef.current = { user: '', ai: '', isFinal: false };
+        }
+      }
+  }, [onStreamMessage]);
+
+  const cleanUpResources = useCallback(() => {
+    mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+    // FIX: Pass argument to disconnect to satisfy TypeScript compiler.
+    // Disconnecting output 0 is safe as ScriptProcessorNode has one output.
+    scriptProcessorRef.current?.disconnect(0);
+    if (inputAudioContextRef.current?.state !== 'closed') {
+        inputAudioContextRef.current?.close().catch(console.error);
+        inputAudioContextRef.current = undefined;
+    }
+    setIsSessionActive(false);
+    setIsConnecting(false);
+    setIsListening(false);
+  }, []);
+
+  const connectRef = useRef<() => void>();
+
+  const handleConnectionError = useCallback(() => {
+    cleanUpResources();
+    sessionPromiseRef.current = null;
+    
+    if (stopSignalRef.current) {
+        return;
+    }
+
+    if (retryCountRef.current < MAX_RETRIES) {
+        retryCountRef.current++;
+        const delay = 1000 * retryCountRef.current;
+        setSessionError(`Connection failed. Retrying in ${delay / 1000}s...`);
+        setTimeout(() => connectRef.current?.(), delay);
+    } else {
+        setSessionError('Could not connect to the service. Please try again later.');
+        setIsConnecting(false);
+    }
+  }, [cleanUpResources]);
+
+  const connect = useCallback(async () => {
+    if (sessionPromiseRef.current || isConnecting || stopSignalRef.current) return;
+    
+    setIsConnecting(true);
+    if (retryCountRef.current > 0) {
+        setSessionError(`Retrying connection... (${retryCountRef.current}/${MAX_RETRIES})`);
+    } else {
+        setSessionError(null);
+    }
+
+    try {
+        const sessionPromise = startLiveSession(progress, {
+            onopen: async () => {
+                mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+                inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: INPUT_SAMPLE_RATE });
+                const source = inputAudioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
+                scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
+                
+                scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
+                    sessionPromiseRef.current?.then((session) => {
+                        const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+                        session.sendRealtimeInput({ media: createPcmBlob(inputData) });
+                    });
+                };
+
+                source.connect(scriptProcessorRef.current);
+                scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
+
+                setIsSessionActive(true);
+                setIsConnecting(false);
+                setIsListening(true);
+                setSessionError(null);
+                retryCountRef.current = 0;
+            },
+            onmessage: async (msg: LiveServerMessage) => {
+                if (msg.toolCall?.functionCalls) {
+                    const results = await onToolCall(msg.toolCall.functionCalls);
+                    const session = await sessionPromiseRef.current;
+                    session?.sendToolResponse({ functionResponses: results });
+                }
+                
+                processAudioMessage(msg);
+                processTranscriptionMessage(msg);
+            },
+            onerror: (e) => {
+                console.error('Session error:', e);
+                handleConnectionError();
+            },
+            onclose: () => {
+                console.log('Session closed');
+                cleanUpResources();
+                sessionPromiseRef.current = null;
+            },
+        });
+
+        sessionPromiseRef.current = sessionPromise;
+        await sessionPromise;
+
+    } catch (error) {
+        console.error('Failed to start session:', error);
+        handleConnectionError();
+    }
+  }, [isConnecting, progress, onToolCall, processAudioMessage, processTranscriptionMessage, handleConnectionError, cleanUpResources]);
+  
+  connectRef.current = connect;
+
+  const startSession = useCallback(() => {
+    stopSignalRef.current = false;
+    retryCountRef.current = 0;
+    connect();
+  }, [connect]);
+
+  const stopSession = useCallback(async () => {
+    stopSignalRef.current = true;
+    const session = await sessionPromiseRef.current;
+    if (session) {
+      session.close();
+    } else {
+        cleanUpResources();
+    }
+    setSessionError(null);
+    retryCountRef.current = 0;
+    sessionPromiseRef.current = null;
+  }, [cleanUpResources]);
+
+  return { isSessionActive, isConnecting, isSpeaking, isListening, startSession, stopSession, sessionError };
+};

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoiceCode AI - Your Conversational Coding Companion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script type="importmap">
+    {
+      "imports": {
+        "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+        "react/": "https://aistudiocdn.com/react@^19.2.0/",
+        "react": "https://aistudiocdn.com/react@^19.2.0",
+        "@google/genai": "https://aistudiocdn.com/@google/genai@^1.26.0",
+        "@monaco-editor/react": "https://aistudiocdn.com/@monaco-editor/react@^4.7.0"
+      }
+    }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0D0D0D;
+            color: #F5F5F5;
+            overflow-x: hidden;
+        }
+
+        .text-brand-green {
+            color: #B9FF66;
+        }
+
+        .border-brand-green {
+            border-color: #B9FF66;
+        }
+
+        .btn-primary {
+            background: linear-gradient(90deg, #B9FF66 0%, #A0E65A 100%);
+            color: #1A1A1A;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary:hover {
+            transform: scale(1.03);
+            box-shadow: 0 4px 25px rgba(185, 255, 102, 0.2);
+        }
+
+        .btn-secondary {
+            background-color: transparent;
+            border: 1px solid #262626;
+            color: #F5F5F5;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-secondary:hover {
+            background-color: #181818;
+            border-color: #444;
+        }
+
+        .dark-card {
+            background-color: #181818;
+            border: 1px solid #262626;
+            transition: border-color 0.3s ease;
+        }
+        
+        .dark-card:hover {
+            border-color: #444;
+        }
+
+        .voice-bar {
+            width: 4px;
+            border-radius: 3px;
+            background: #B9FF66;
+            margin: 0 3px;
+            animation: voice-wave 1.2s infinite ease-in-out;
+        }
+        
+        @keyframes voice-wave {
+            0%, 100% {
+                height: 8px;
+                opacity: 0.5;
+            }
+            50% {
+                height: 24px;
+                opacity: 1;
+            }
+        }
+        
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .animate-fade-in {
+            animation: fade-in 0.5s ease-out;
+        }
+        
+        .mobile-menu {
+            background: rgba(13, 13, 13, 0.9);
+            backdrop-filter: blur(10px);
+        }
+    </style>
+</head>
+<body class="bg-black text-white font-sans">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+</body>
+</html>
