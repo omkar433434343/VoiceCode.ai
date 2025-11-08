@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { FunctionCall, FunctionResponse } from "@google/genai";
 import { Course, Lesson, Transcript, ConsoleOutput } from '../types';
@@ -72,6 +73,13 @@ const LearningView: React.FC<LearningViewProps> = ({ course, onBack }) => {
     setTranscript(newTranscript);
   }, []);
   
+  useEffect(() => {
+    const lesson = course.modules
+      .flatMap(m => m.lessons)
+      .find(l => l.id === progress.currentLessonId);
+    setCurrentLesson(lesson || null);
+  }, [progress.currentLessonId, course]);
+
   const { 
     isSessionActive, 
     isConnecting,
@@ -80,23 +88,17 @@ const LearningView: React.FC<LearningViewProps> = ({ course, onBack }) => {
     startSession, 
     stopSession,
     sessionError
-  } = useLiveTutor(onStreamMessage, handleToolCall, progress);
-
-  useEffect(() => {
-    const lesson = course.modules
-      .flatMap(m => m.lessons)
-      .find(l => l.id === progress.currentLessonId);
-    setCurrentLesson(lesson || null);
-  }, [progress.currentLessonId, course]);
-
+  } = useLiveTutor(onStreamMessage, handleToolCall, progress, currentLesson);
   
   const handleCompleteLesson = () => {
       const nextLesson = getNextLesson();
-      if(nextLesson){
-        completeLesson(currentLesson!.id, nextLesson.id);
-      } else {
-        alert("Congratulations! You've completed the course!");
-        onBack();
+      if(nextLesson && currentLesson){
+        completeLesson(currentLesson.id, nextLesson.id);
+      } else if (currentLesson) {
+         // Mark final lesson as complete even if no next lesson
+         completeLesson(currentLesson.id, currentLesson.id);
+         alert("Congratulations! You've completed the course!");
+         onBack();
       }
   }
 

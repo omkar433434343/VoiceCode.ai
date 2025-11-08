@@ -1,6 +1,7 @@
+
 import { useState, useRef, useCallback } from 'react';
 import { LiveServerMessage, FunctionCall, FunctionResponse } from "@google/genai";
-import { Progress, Transcript } from '../types';
+import { Progress, Transcript, Lesson } from '../types';
 import { startLiveSession, createPcmBlob, LiveSession } from '../services/geminiService';
 import { decode, decodeAudioData } from '../utils/audio';
 
@@ -11,7 +12,8 @@ const MAX_RETRIES = 3;
 export const useLiveTutor = (
   onStreamMessage: (newTranscript: Transcript) => void,
   onToolCall: (functionCalls: FunctionCall[]) => Promise<FunctionResponse[]>,
-  progress: Progress
+  progress: Progress,
+  currentLesson: Lesson | null
 ) => {
   const sessionPromiseRef = useRef<Promise<LiveSession> | null>(null);
   const [isSessionActive, setIsSessionActive] = useState(false);
@@ -90,8 +92,6 @@ export const useLiveTutor = (
 
   const cleanUpResources = useCallback(() => {
     mediaStreamRef.current?.getTracks().forEach(track => track.stop());
-    // FIX: Pass argument to disconnect to satisfy TypeScript compiler.
-    // Disconnecting output 0 is safe as ScriptProcessorNode has one output.
     scriptProcessorRef.current?.disconnect(0);
     if (inputAudioContextRef.current?.state !== 'closed') {
         inputAudioContextRef.current?.close().catch(console.error);
@@ -134,7 +134,7 @@ export const useLiveTutor = (
     }
 
     try {
-        const sessionPromise = startLiveSession(progress, {
+        const sessionPromise = startLiveSession(progress, currentLesson, {
             onopen: async () => {
                 mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
                 inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: INPUT_SAMPLE_RATE });
@@ -185,7 +185,7 @@ export const useLiveTutor = (
         console.error('Failed to start session:', error);
         handleConnectionError();
     }
-  }, [isConnecting, progress, onToolCall, processAudioMessage, processTranscriptionMessage, handleConnectionError, cleanUpResources]);
+  }, [isConnecting, progress, currentLesson, onToolCall, processAudioMessage, processTranscriptionMessage, handleConnectionError, cleanUpResources]);
   
   connectRef.current = connect;
 
